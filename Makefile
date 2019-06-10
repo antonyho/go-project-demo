@@ -1,34 +1,22 @@
-GOCMD=go1.12.5
+GOCMD=go
 GOBUILD=$(GOCMD) build
 GOCLEAN=$(GOCMD) clean
 GOTEST=$(GOCMD) test
 GORUN=$(GOCMD) run
 TARGET=websrv
-DEPCMD=dep
 
-all: deps test build
+all: test build
 
-.PHONY: dep deps-test deps test benchmark run image build
+.PHONY: test benchmark run image build
 
-dep:
-ifeq ($(shell command -v dep 2> /dev/null),)
-	go get -u github.com/golang/dep/cmd/dep
-endif
+test:
+	$(GOTEST) -v -race -cover ./...
 
-deps-test: dep
-	$(DEPCMD) ensure -v
+benchmark:
+	$(GOTEST) -race -bench=. ./...
 
-deps: dep
-	$(DEPCMD) ensure
-
-test: deps
-	$(GOTEST) -v -cover ./...
-
-benchmark: deps
-	$(GOTEST) -v -bench=. ./...
-
-build: deps
-	$(GOBUILD) -o $(TARGET) .
+build:
+	$(GOBUILD) -o $(TARGET) ./cmd
 
 install: build
 	cp $(TARGET) $(GOPATH)/bin/
@@ -43,5 +31,5 @@ uninstall:
 image:
 	docker build --rm -t antonyho-websrv-demo .
 
-run: deps
+run:
 	$(GORUN) cmd/main.go -p 8080
