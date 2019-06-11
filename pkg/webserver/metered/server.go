@@ -59,6 +59,13 @@ func (s *webServer) meter() {
 		panic(err)
 	}
 
+	/* [!!!] Consider how to handle a graceful shutdown here.
+	 * Finish writing all request information to file
+	 * when web server receives SIGTERM.
+	 * The channel might be closed before all requests have been written.
+	 * And file description might also be closed at the other end.
+	 * Some unwritten request information might lost.
+	 */
 	for reqInfo := range s.incReqChan {
 		// Store the request info to the list
 		s.reqList.PushBack(reqInfo)
@@ -162,8 +169,12 @@ func (s *webServer) Listen(endpoint string) {
 			log.Printf("HTTP server shutdown error: %+v\n", err)
 		}
 		close(s.incReqChan)
-		s.historyFile.Sync() // Write remaining request information to file
-		s.historyFile.Close()
+		if err := s.historyFile.Sync(); err != nil { // Flush unwritten byte to file
+			log.Printf("Flush unwritten byte to file error: %+v\n", err)
+		}
+		if err := s.historyFile.Close(); err != nil {
+			log.Printf("Close history file error: %+v\n", err)
+		}
 
 		close(s.idleConnsClosed)
 	}()
