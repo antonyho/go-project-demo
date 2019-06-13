@@ -2,7 +2,6 @@ package metered
 
 import (
 	"container/list"
-	"log"
 	"sync"
 	"time"
 )
@@ -35,7 +34,6 @@ func (p *RequestInfoPool) Add(requestInfos ...RequestInfo) {
 	p.m.Lock()
 	defer p.m.Unlock()
 	for _, reqInfo := range requestInfos {
-		log.Printf("%+v\n", reqInfo)
 		p.pool.PushBack(reqInfo)
 	}
 }
