@@ -4,7 +4,6 @@ package metered
 
 import (
 	"bufio"
-	"container/list"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,7 +30,7 @@ type webServer struct {
 	fw              framework.Wrapper // A web framework
 	idleConnsClosed chan struct{}
 	incReqChan      chan RequestInfo
-	reqList         *list.List
+	reqInfoPool     *RequestInfoPool
 	historyFile     *os.File
 }
 
@@ -39,6 +38,7 @@ type webServer struct {
 // given the http.ServeMux to handle web requests.
 func NewWebServer(mux *http.ServeMux) *webServer {
 	webserver := new(webServer)
+	webserver.reqInfoPool = NewRequestInfoPool()
 	mux.HandleFunc(StatURL, webserver.statistic) // This URL will be overrided
 	f := framework.New(mux, webserver.filter, nil)
 	webserver.fw = f
@@ -55,7 +55,7 @@ func (s *webServer) filter(resp http.ResponseWriter, req *http.Request) {
 func (s *webServer) meter() {
 	// Read history from file
 	if err := s.restore(); err != nil {
-		fmt.Println("Terminating web server due to history file retrieval failure.")
+		log.Println("Terminating web server due to history file retrieval failure.")
 		panic(err)
 	}
 
@@ -68,7 +68,7 @@ func (s *webServer) meter() {
 	 */
 	for reqInfo := range s.incReqChan {
 		// Store the request info to the list
-		s.reqList.PushBack(reqInfo)
+		s.reqInfoPool.Add(reqInfo)
 		// Persist to file
 		if err := s.store(reqInfo); err != nil {
 			// No specific requirement information about this minor error.
@@ -80,6 +80,7 @@ func (s *webServer) meter() {
 
 // restore request information from file.
 func (s *webServer) restore() error {
+	reqInfos := []RequestInfo{}
 	windowStartPoint := time.Now().Add(-1 * time.Minute)
 	buf := bufio.NewScanner(s.historyFile)
 	for buf.Scan() {
@@ -92,9 +93,10 @@ func (s *webServer) restore() error {
 		reqTime := time.Unix(0, reqInfo.Time)
 		if reqTime.After(windowStartPoint) {
 			// Store the history request info to the list
-			s.reqList.PushBack(reqInfo)
+			reqInfos = append(reqInfos, reqInfo)
 		}
 	}
+	s.reqInfoPool.Add(reqInfos...)
 
 	return nil
 }
@@ -119,21 +121,8 @@ func (s *webServer) store(reqInfo RequestInfo) error {
 // count the number of incoming request since last minute.
 func (s *webServer) count() int {
 	windowStartPoint := time.Now().Add(-1 * time.Minute)
-	var next *list.Element
-	total := 0
-	for e := s.reqList.Front(); e != nil; e = next {
-		reqTime := time.Unix(0, e.Value.(RequestInfo).Time)
-		next = e.Next()
-		if reqTime.Before(windowStartPoint) {
-			// Discard expired request
-			s.reqList.Remove(e)
-		} else {
-			// Count this request
-			total++
-		}
-	}
-
-	return total
+	s.reqInfoPool.ClearRecord(windowStartPoint)
+	return s.reqInfoPool.Count()
 }
 
 // statistic handles HTTP request which inquiries statistics.
@@ -145,7 +134,6 @@ func (s *webServer) statistic(resp http.ResponseWriter, req *http.Request) {
 // Listen listens listens on the TCP network address endpoint.
 func (s *webServer) Listen(endpoint string) {
 	s.incReqChan = make(chan RequestInfo)
-	s.reqList = list.New()
 
 	// Open history file from current working directory
 	var err error
@@ -163,6 +151,7 @@ func (s *webServer) Listen(endpoint string) {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 		<-sigChan // Received interrupt signal
+		log.Println("Gracefully shutdown...")
 
 		// Shutdown the web server gracefully
 		if err := httpSrv.Shutdown(context.Background()); err != nil {
@@ -183,6 +172,7 @@ func (s *webServer) Listen(endpoint string) {
 	go s.meter()
 
 	// Start the HTTP Server
+	log.Printf("Listening on %s\n", endpoint)
 	if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("HTTP server ListenAndServe Error: %+v\n", err)
 	}
