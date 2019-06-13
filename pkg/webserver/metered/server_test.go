@@ -58,10 +58,12 @@ func Test_webServer(t *testing.T) {
 	server := NewWebServer(http.NewServeMux())
 	server.incReqChan = make(chan RequestInfo, 1)
 	defer close(server.incReqChan)
-	historyFile, err := os.OpenFile(HistoryFilename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	testdataHistoryFilePath := fmt.Sprintf("testdata/%s", HistoryFilename)
+	historyFile, err := os.OpenFile(testdataHistoryFilePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		t.Skip(err)
 	}
+	defer historyFile.Close()
 	server.historyFile = historyFile
 
 	t.Run("restore", func(t *testing.T) {
@@ -93,7 +95,6 @@ func Test_webServer(t *testing.T) {
 	t.Run("filter", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "http://localhost/stat", nil)
 		recorder := httptest.NewRecorder()
-		// t.Log(len(server.incReqChan))
 		server.filter(recorder, req)
 
 		if len(server.incReqChan) != 1 {
